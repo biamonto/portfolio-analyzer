@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.sqlite3
+*.db
+
+# Virtual env
+.venv/
+env/
+venv/
+
+# Streamlit
+.streamlit/config.toml
+
+# VS Code
+.vscode/
+
+# Mac / systemfiler
+.DS_Store
