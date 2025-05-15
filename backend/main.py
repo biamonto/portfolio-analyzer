@@ -37,6 +37,11 @@ class ETFAlphaRequest(BaseModel):
     start: str
     end: str
 
+class ETFFactorRequest(BaseModel):
+    symbol: str
+    start: str
+    end: str
+
 @app.get("/")
 def read_root():
     return {"message": "Din FastAPI-backend körs!"}
@@ -332,6 +337,72 @@ def etf_alpha_analysis(req: ETFAlphaRequest):
             "scatter": scatter_data.to_dict(orient="list")
         }
 
+
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.post("/etf-factors")
+def analyze_fama_french(data: ETFFactorRequest):
+    import yfinance as yf
+    import pandas as pd
+    import numpy as np
+    import statsmodels.api as sm
+    import pandas_datareader.data as web
+
+    try:
+        # 1. Ladda ETF-priser och beräkna avkastningar
+        etf_data = yf.download(data.symbol, start=data.start, end=data.end, progress=False)
+        if etf_data.empty:
+            return {"error": f"No data found for symbol {data.symbol}"}
+            
+        etf_returns = etf_data['Close'].pct_change()
+
+        # 2. Hämta Fama-French-faktorer (dagliga)
+        try:
+            ff = web.DataReader("F-F_Research_Data_Factors_daily", "famafrench")[0]
+        except Exception as e:
+            return {"error": f"Failed to fetch Fama-French factors: {str(e)}"}
+            
+        # Convert index to datetime
+        ff.index = pd.to_datetime(ff.index)
+        etf_returns.index = pd.to_datetime(etf_returns.index)
+        
+        # 3. Align the data using pandas
+        aligned_data = pd.concat([etf_returns, ff], axis=1, join='inner')
+        if aligned_data.empty:
+            return {"error": "No overlapping dates found between ETF and factor data"}
+            
+        # Remove any remaining NaN values
+        aligned_data = aligned_data.dropna()
+        
+        if len(aligned_data) < 30:  # Minimum sample size check
+            return {"error": "Insufficient data points for analysis"}
+            
+        # 4. Prepare data for regression
+        y = aligned_data.iloc[:, 0] - aligned_data['RF'] / 100  # Excess returns
+        X = aligned_data[['Mkt-RF', 'SMB', 'HML']].values / 100  # Convert factors to decimals
+        X = sm.add_constant(X)  # Add constant for alpha
+
+        # 5. Run regression
+        model = sm.OLS(y, X).fit()
+
+        # 6. Extract and convert results to Python scalars
+        params = model.params.tolist()
+        pvalues = model.pvalues.tolist()
+
+        return {
+            "symbol": data.symbol,
+            "alpha": round(params[0], 5),
+            "beta_market": round(params[1], 4),
+            "beta_smb": round(params[2], 4),
+            "beta_hml": round(params[3], 4),
+            "r_squared": round(float(model.rsquared), 4),
+            "p_alpha": round(pvalues[0], 4),
+            "p_market": round(pvalues[1], 4),
+            "p_smb": round(pvalues[2], 4),
+            "p_hml": round(pvalues[3], 4),
+            "n_obs": int(model.nobs)
+        }
 
     except Exception as e:
         return {"error": str(e)}
