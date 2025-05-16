@@ -8,4 +8,4 @@ numpy
 statsmodels
 pandas_datareader
 plotly
-pypfopt==1.5.5
+git+https://github.com/robertmartin8/PyPortfolioOpt.git
