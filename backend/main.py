@@ -308,8 +308,6 @@ def etf_alpha_analysis(req: ETFAlphaRequest):
             return {"error": "Förväntade MultiIndex med 'Close', men fick annat format."}
 
         df = df.dropna()
-
-        df = df.dropna()
         returns = df.pct_change().dropna()
 
         # Förbered regression
@@ -406,3 +404,4 @@ def analyze_fama_french(data: ETFFactorRequest):
 
     except Exception as e:
         return {"error": str(e)}
+

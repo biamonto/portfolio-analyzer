@@ -5,8 +5,6 @@ import plotly.express as px
 import plotly.graph_objects as go
 import numpy as np
 
-
-
 st.title("📊 Portföljanalys och optimering")
 
 symbols = st.text_input("Ange tillgångar (t.ex. AAPL, GOOGL, MSFT)").upper()

@@ -3,10 +3,15 @@ import requests
 import plotly.graph_objects as go
 import datetime
 
-st.title("📊 ETF-analys – Förvaltarbedömning & riskprofil")
+st.set_page_config(
+    page_title="Fund analysis",
+    page_icon="📊"
+)
+
+st.title("📊 Fund analysis")
 
 with st.form("etf_form"):
-    symbol = st.text_input("ETF-symbol (ex: SPY, QQQ, ARKK)").upper()
+    symbol = st.text_input("Fund symbol (ex: SPY, QQQ, ARKK)").upper()
     col1, col2 = st.columns(2)
     with col1:
         start = st.date_input("Startdatum", value=datetime.date(2020, 1, 1))
@@ -29,13 +34,18 @@ if submitted and symbol:
         else:
             st.subheader(f"🔍 Resultat för {data['symbol']}")
 
-            st.metric("Totalavkastning", f"{round(data['total_return'] * 100, 2)} %")
-            st.metric("CAGR", f"{round(data['cagr'] * 100, 2)} %")
-            st.metric("Sharpe", data['sharpe'])
-            st.metric("Sortino", data['sortino'])
-            st.metric("Max drawdown", f"{round(data['max_drawdown'] * 100, 2)} %")
-            st.metric("Standardavvikelse", f"{round(data['std_dev'] * 100, 2)} %")
-            st.metric("% positiva månader", f"{round(data['positive_months'] * 100, 1)} %")
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Totalavkastning", f"{round(data['total_return'] * 100, 2)} %")
+            col2.metric("CAGR", f"{round(data['cagr'] * 100, 2)} %")
+            col3.metric("% positiva månader", f"{round(data['positive_months'] * 100, 1)} %")
+
+            col4, col5, col6 = st.columns(3)
+            col4.metric("Sharpe", data['sharpe'])
+            col5.metric("Sortino", data['sortino'])
+            col6.metric("Standardavvikelse", f"{round(data['std_dev'] * 100, 2)} %")
+
+            col7, _, _ = st.columns(3)
+            col7.metric("Max drawdown", f"{round(data['max_drawdown'] * 100, 2)} %")
 
             # Prisgraf
             st.subheader("📈 Prisgraf")
@@ -96,6 +106,45 @@ if submitted and symbol:
 
                 else:
                     st.error("Kunde inte hämta alpha-analys.")
+
+                st.subheader("🧪 Faktoranalys (Fama-French 3-faktor)")
+
+                payload_ff = {
+                    "symbol": symbol,
+                    "start": str(start),
+                    "end": str(end)
+                }
+
+                ff_res = requests.post("http://localhost:8000/etf-factors", json=payload_ff)
+
+                if ff_res.ok:
+                    ff_data = ff_res.json()
+                    if "error" in ff_data:
+                        st.error(ff_data["error"])
+                    else:
+                        col1, col2, col3 = st.columns(3)
+                        col1.metric("Alpha", f"{round(ff_data['alpha']*100, 3)} %")
+                        col2.metric("Beta (Marknad)", round(ff_data["beta_market"], 3))
+                        col3.metric("R²", round(ff_data["r_squared"], 3))
+
+                        col4, col5 = st.columns(2)
+                        col4.metric("Beta (SMB)", round(ff_data["beta_smb"], 3))
+                        col5.metric("Beta (HML)", round(ff_data["beta_hml"], 3))
+
+                        st.caption(f"📊 {ff_data['n_obs']} dagliga observationer")
+
+                        if ff_data["p_alpha"] < 0.05:
+                            st.success(f"✅ Alpha signifikant (p={ff_data['p_alpha']})")
+                        else:
+                            st.info(f"ℹ️ Alpha ej signifikant (p={ff_data['p_alpha']})")
+
+                        if abs(ff_data["beta_smb"]) > 0.3:
+                            st.info(f"📈 Small cap-exponering: {round(ff_data['beta_smb'], 2)}")
+
+                        if abs(ff_data["beta_hml"]) > 0.3:
+                            st.info(f"📘 Value- eller growth-bias: {round(ff_data['beta_hml'], 2)}")
+                else:
+                    st.error("Kunde inte hämta faktordata.")
 
     else:
         st.error("Något gick fel med API-anropet.")
