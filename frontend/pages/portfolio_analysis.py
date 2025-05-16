@@ -5,17 +5,17 @@ import plotly.express as px
 import plotly.graph_objects as go
 import numpy as np
 
-st.title("📊 Portföljanalys och optimering")
+st.title("📊 Portfolio analysis and optimization")
 
-symbols = st.text_input("Ange tillgångar (t.ex. AAPL, GOOGL, MSFT)").upper()
-start = st.date_input("Startdatum", datetime.date(2023, 1, 1))
-end = st.date_input("Slutdatum", datetime.date.today())
+symbols = st.text_input("Enter assets (e.g. AAPL, GOOGL, MSFT)").upper()
+start = st.date_input("Start date", datetime.date(2023, 1, 1))
+end = st.date_input("End date", datetime.date.today())
 
 weights = {}
 total_input = 0
 if symbols:
     symbol_list = [s.strip().upper() for s in symbols.split(",") if s.strip()]
-    st.subheader("Vikta tillgångarna manuellt (%):")
+    st.subheader("Set asset weights manually (%):")
 
     for s in symbol_list:
         weight_input = st.number_input(
@@ -27,13 +27,13 @@ if symbols:
         total_input += weight_input
 
     # Visa summering och feedback
-    st.markdown(f"**Totalvikt: {round(total_input, 2)} %**")
+    st.markdown(f"**Total weight: {round(total_input, 2)} %**")
     if total_input < 99.9:
-        st.warning("⚠️ Summan är under 100 % – vikterna kommer normaliseras automatiskt.")
+        st.warning("⚠️ Sum < 100% – weights will be normalized automatically.")
     elif total_input > 100.1:
-        st.warning("⚠️ Summan överstiger 100 % – vikterna kommer justeras ned.")
+        st.warning("⚠️ Sum > 100% – weights will be scaled down.")
     else:
-        st.success("✅ Vikterna summerar till 100 %.")
+        st.success("✅ Sum of weights equal 100 %.")
 
     # Normalisera till 100 %
     total_fraction = sum(weights.values())
@@ -48,35 +48,33 @@ if symbols:
         }
 
 
-    if st.button("🔍 Analysera portfölj"):
+    if st.button("🔍 Analyse portfolio"):
         res = requests.post("http://localhost:8000/analyze", json=portfolio)
         if res.ok:
             result = res.json()
             if "error" in result:
                 st.error(result["error"])
             else:
-                st.success("Analys klar!")
-                st.write("📈 Förväntad avkastning:", round(result["expected_return"] * 100, 2), "%")
-                st.write("📉 Volatilitet:", round(result["volatility"] * 100, 2), "%")
-                st.write("📊 Sharpe-kvot:", result["sharpe_ratio"])
+                st.success("Analysis complete!")
+                st.write("📈 Expected return:", round(result["expected_return"] * 100, 2), "%")
+                st.write("📉 Volatility:", round(result["volatility"] * 100, 2), "%")
+                st.write("📊 Sharpe ratio:", result["sharpe_ratio"])
         else:
             st.error("Kunde inte analysera portföljen.")
 
-    if st.button("🧠 Optimera portfölj"):
+    if st.button("🧠 Optimize portfolio"):
         res = requests.post("http://localhost:8000/optimize", json=portfolio)
         if res.ok:
             result = res.json()
             if "error" in result:
                 st.error(result["error"])
             else:
-                st.success("Optimering klar!")
-                st.subheader("Optimerade vikter:")
-
-                st.subheader("Optimerade vikter:")
+                st.success("Optimization done!")
+                st.subheader("Optimal weights:")
 
                 labels = list(result.keys())
                 values = [v * 100 for v in result.values()]
-                fig = px.pie(names=labels, values=values, title="Optimerad portföljfördelning")
+                fig = px.pie(names=labels, values=values, title="Optimized portfolio allocation")
                 st.plotly_chart(fig)
 
                 for k, v in result.items():
@@ -84,8 +82,8 @@ if symbols:
         else:
             st.error("Kunde inte optimera portföljen.")
 
-with st.expander("📈 Visa portföljens historiska utveckling"):
-    if st.button("Visa historik"):
+with st.expander("📈 Historical returns"):
+    if st.button("Show history"):
         res = requests.post("http://localhost:8000/history", json=portfolio)
         if res.ok:
             data = res.json()
@@ -97,42 +95,42 @@ with st.expander("📈 Visa portföljens historiska utveckling"):
                     x=data["dates"],
                     y=data["values"],
                     mode="lines",
-                    name="Portföljvärde",
+                    name="Portfolio value",
                     line=dict(color="royalblue")
                 ))
                 fig.update_layout(
-                    title="Portföljens utveckling",
+                    title="Portfolio return",
                     xaxis_title="Datum",
-                    yaxis_title="Relativt värde (start = 1.0)",
+                    yaxis_title="Relativte value (start = 1.0)",
                     height=400
                 )
                 st.plotly_chart(fig)
         else:
             st.error("Kunde inte hämta historik.")
 
-with st.expander("🧬 Visa portföljegenskaper"):
-    if st.button("Analysera egenskaper"):
+with st.expander("🧬 Show portfolio characteristics"):
+    if st.button("Analyse"):
         res = requests.post("http://localhost:8000/portfolio-characteristics", json=portfolio)
         if res.ok:
             data = res.json()
 
-            st.subheader("💱 Valutaexponering")
+            st.subheader("💱 FX exposure")
             if data["currency_weights"]:
                 fig_currency = px.pie(
                     names=list(data["currency_weights"].keys()),
                     values=[v * 100 for v in data["currency_weights"].values()],
-                    title="Valutafördelning (%)"
+                    title="FX (%)"
                 )
                 st.plotly_chart(fig_currency)
                 # Efter st.plotly_chart(fig_currency)
                 main_currency = max(data["currency_weights"], key=data["currency_weights"].get)
                 share = data["currency_weights"][main_currency]
                 if share > 0.5:
-                    st.info(f"🔁 Portföljen är kraftigt viktad mot {main_currency}. Överväg hedge mot växelkursrisk.")
+                    st.info(f"🔁 High concentration in {main_currency} – currency hedging may be warranted.")
                     if main_currency == "USD":
-                        st.write("💡 Exempel: FXE (Euro hedge), USD/SEK-terminer")
+                        st.write("💡 Example: FXE (Euro hedge), USD/SEK-forwards")
                     if main_currency == "EUR":
-                        st.write("💡 Exempel: EUO, EUR/SEK-terminer")
+                        st.write("💡 Example: EUO, EUR/SEK-forwards")
 
             else:
                 st.warning("Ingen valutadata hittades.")
