@@ -54,21 +54,21 @@ def analyze_portfolio(portfolio: Portfolio):
     raw = yf.download(symbols, start=portfolio.start, end=portfolio.end)
     print(raw)
     if raw.empty:
-        return {"error": "Ingen data hittades för valda symboler och datum."}
+        return {"error": "No data found for selected symbols and dates."}
 
-    # Om vi har flera aktier kommer raw ha MultiIndex kolumner
+    # Handle MultiIndex columns
     if isinstance(raw.columns, pd.MultiIndex):
         try:
             df = raw['Close']
         except KeyError:
-            return {"error": "'Close' finns inte i hämtad data."}
+            return {"error": "'Close' data not found."}
     else:
-        # Bara en aktie
+        # Single asset
         try:
             df = raw[['Close']]
             df.columns = [symbols[0]]
         except KeyError:
-            return {"error": "'Close' finns inte i hämtad data."}
+            return {"error": "'Close' data not found."}
     df = df.dropna()
 
     mu = expected_returns.mean_historical_return(df)
@@ -108,30 +108,30 @@ def get_portfolio_history(portfolio: Portfolio):
 
     raw = yf.download(symbols, start=portfolio.start, end=portfolio.end)
     if raw.empty:
-        return {"error": "Ingen data hittades."}
+        return {"error": "No data found."}
 
     if isinstance(raw.columns, pd.MultiIndex):
         try:
             df = raw["Close"]
         except KeyError:
-            return {"error": "'Close' saknas i data."}
+            return {"error": "'Close' data not found."}
     else:
         try:
             df = raw[["Close"]]
             df.columns = [symbols[0]]
         except KeyError:
-            return {"error": "'Close' saknas i data."}
+            return {"error": "'Close' data not found."}
 
     df = df.dropna()
 
-    # Normalisera varje tillgångs pris till 1.0 i början
+    # Normalize each asset price to 1.0 at the beginning
     df_normalized = df / df.iloc[0]
 
-    # Vikta enligt användarens input
+    # Weight according to user's input
     for col in df_normalized.columns:
         df_normalized[col] *= weights_dict.get(col, 0)
 
-    # Summera till portföljens dagliga värde
+    # Sum up to the portfolio's daily value
     df_normalized["Total"] = df_normalized.sum(axis=1)
 
     return {
@@ -193,19 +193,19 @@ def calculate_var(portfolio: ExtendedPortfolio):
 
     raw = yf.download(symbols, start=portfolio.start, end=portfolio.end)
     if raw.empty:
-        return {"error": "Ingen data hittades."}
+        return {"error": "No data found."}
 
     if isinstance(raw.columns, pd.MultiIndex):
         try:
             df = raw["Close"]
         except KeyError:
-            return {"error": "'Close' saknas i data."}
+            return {"error": "'Close' data not found."}
     else:
         try:
             df = raw[["Close"]]
             df.columns = [symbols[0]]
         except KeyError:
-            return {"error": "'Close' saknas i data."}
+            return {"error": "'Close' data not found."}
 
     df = df.dropna()
     returns = df.pct_change().dropna()
@@ -215,7 +215,7 @@ def calculate_var(portfolio: ExtendedPortfolio):
 
     portfolio_returns = returns.sum(axis=1)
 
-    # Aggregera över önskad horisont
+    # Aggregate over desired horizon
     if horizon > 1:
         portfolio_returns = portfolio_returns.rolling(horizon).sum().dropna()
 
@@ -238,7 +238,7 @@ def analyze_etf(data: ETFRequest):
     try:
         df = yf.download(data.symbol, start=data.start, end=data.end, progress=False)
 
-        # Om det är MultiIndex: välj rätt nivå
+        # Handle MultiIndex: select the right level
         if isinstance(df.columns, pd.MultiIndex):
             df = df["Close"].dropna()
         else:
@@ -249,7 +249,7 @@ def analyze_etf(data: ETFRequest):
         
         returns = df["Price"].pct_change().dropna()
 
-        # Beräkningar
+        # Calculations
         total_return = (df["Price"][-1] / df["Price"][0]) - 1
         days = (pd.to_datetime(data.end) - pd.to_datetime(data.start)).days
         cagr = (1 + total_return) ** (365 / days) - 1
@@ -264,7 +264,7 @@ def analyze_etf(data: ETFRequest):
         drawdown = cumulative / running_max - 1
         max_dd = drawdown.min()
 
-        # % positiva månader
+        # % positive months
         monthly = df["Price"].resample("M").last().pct_change().dropna()
         pos_months = (monthly > 0).sum() / len(monthly)
 
@@ -294,30 +294,30 @@ def analyze_etf(data: ETFRequest):
 def etf_alpha_analysis(req: ETFAlphaRequest):
 
     try:
-        # Ladda ETF och benchmark
+        # Load ETF and benchmark
         df = yf.download([req.symbol, req.benchmark], start=req.start, end=req.end, progress=False)
 
-        # Hantera MultiIndex korrekt
+        # Handle MultiIndex correctly
         if isinstance(df.columns, pd.MultiIndex):
             if "Close" not in df.columns.levels[0]:
                 print(df)
-                return {"error": "'Close' saknas i nedladdad data."}
+                return {"error": "'Close' data not found in downloaded data."}
             
             df = df["Close"]
         else:
-            return {"error": "Förväntade MultiIndex med 'Close', men fick annat format."}
+            return {"error": "Expected MultiIndex with 'Close', but got different format."}
 
         df = df.dropna()
         returns = df.pct_change().dropna()
 
-        # Förbered regression
+        # Prepare regression
         y = returns[req.symbol]
         X = returns[req.benchmark]
         X = sm.add_constant(X)
 
         model = sm.OLS(y, X).fit()
 
-        # Konvertera till listor för frontend-graf
+        # Convert to lists for frontend graph
         scatter_data = pd.DataFrame({
             "etf_ret": y.values,
             "benchmark_ret": X[req.benchmark].values
@@ -348,14 +348,14 @@ def analyze_fama_french(data: ETFFactorRequest):
     import pandas_datareader.data as web
 
     try:
-        # 1. Ladda ETF-priser och beräkna avkastningar
+        # 1. Load ETF prices and calculate returns
         etf_data = yf.download(data.symbol, start=data.start, end=data.end, progress=False)
         if etf_data.empty:
             return {"error": f"No data found for symbol {data.symbol}"}
             
         etf_returns = etf_data['Close'].pct_change()
 
-        # 2. Hämta Fama-French-faktorer (dagliga)
+        # 2. Fetch Fama-French factors (daily)
         try:
             ff = web.DataReader("F-F_Research_Data_Factors_daily", "famafrench")[0]
         except Exception as e:

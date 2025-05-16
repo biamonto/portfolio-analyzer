@@ -26,29 +26,28 @@ if symbols:
         weights[s] = weight_input / 100
         total_input += weight_input
 
-    # Visa summering och feedback
+    # Show summary and feedback
     st.markdown(f"**Total weight: {round(total_input, 2)} %**")
     if total_input < 99.9:
         st.warning("⚠️ Sum < 100% – weights will be normalized automatically.")
     elif total_input > 100.1:
         st.warning("⚠️ Sum > 100% – weights will be scaled down.")
     else:
-        st.success("✅ Sum of weights equal 100 %.")
+        st.success("✅ Sum of weights equal 100%.")
 
-    # Normalisera till 100 %
+    # Normalize to 100%
     total_fraction = sum(weights.values())
     for k in weights:
         weights[k] /= total_fraction
 
-        # Förbered API-data
+        # Prepare API data
         portfolio = {
             "assets": [{"symbol": k, "weight": round(v, 4)} for k, v in weights.items()],
             "start": str(start),
             "end": str(end)
         }
 
-
-    if st.button("🔍 Analyse portfolio"):
+    if st.button("🔍 Analyze portfolio"):
         res = requests.post("http://localhost:8000/analyze", json=portfolio)
         if res.ok:
             result = res.json()
@@ -60,7 +59,7 @@ if symbols:
                 st.write("📉 Volatility:", round(result["volatility"] * 100, 2), "%")
                 st.write("📊 Sharpe ratio:", result["sharpe_ratio"])
         else:
-            st.error("Kunde inte analysera portföljen.")
+            st.error("Could not analyze portfolio.")
 
     if st.button("🧠 Optimize portfolio"):
         res = requests.post("http://localhost:8000/optimize", json=portfolio)
@@ -69,7 +68,7 @@ if symbols:
             if "error" in result:
                 st.error(result["error"])
             else:
-                st.success("Optimization done!")
+                st.success("Optimization complete!")
                 st.subheader("Optimal weights:")
 
                 labels = list(result.keys())
@@ -80,7 +79,7 @@ if symbols:
                 for k, v in result.items():
                     st.write(f"{k}: {round(v * 100, 2)} %")
         else:
-            st.error("Kunde inte optimera portföljen.")
+            st.error("Could not optimize portfolio.")
 
 with st.expander("📈 Historical returns"):
     if st.button("Show history"):
@@ -100,13 +99,13 @@ with st.expander("📈 Historical returns"):
                 ))
                 fig.update_layout(
                     title="Portfolio return",
-                    xaxis_title="Datum",
-                    yaxis_title="Relativte value (start = 1.0)",
+                    xaxis_title="Date",
+                    yaxis_title="Relative value (start = 1.0)",
                     height=400
                 )
                 st.plotly_chart(fig)
         else:
-            st.error("Kunde inte hämta historik.")
+            st.error("Could not fetch history.")
 
 with st.expander("🧬 Show portfolio characteristics"):
     if st.button("Analyse"):
@@ -135,47 +134,46 @@ with st.expander("🧬 Show portfolio characteristics"):
             else:
                 st.warning("Ingen valutadata hittades.")
 
-            st.subheader("🏦 Sektorallokering")
+            st.subheader("🏦 Sector allocation")
             if data["sector_weights"]:
                 fig_sector = px.pie(
                     names=list(data["sector_weights"].keys()),
                     values=[v * 100 for v in data["sector_weights"].values()],
-                    title="Sektorfördelning (%)"
+                    title="Sector allocation (%)"
                 )
                 st.plotly_chart(fig_sector)
                 top_sector = max(data["sector_weights"], key=data["sector_weights"].get)
                 top_sector_pct = data["sector_weights"][top_sector]
                 if top_sector_pct > 0.5:
-                    st.info(f"📌 Portföljen är tungt exponerad mot sektorn: {top_sector}")
+                    st.info(f"📌 Portfolio is heavily exposed to sector: {top_sector}")
                 else:
-                    st.success("✅ Portföljen har en balanserad sektorallokering.")
+                    st.success("✅ Portfolio has balanced sector allocation.")
             else:
-                st.warning("Ingen sektordata hittades.")
+                st.warning("No sector data found.")
 
-            st.subheader("🌍 Regionfördelning")
+            st.subheader("🌍 Regional allocation")
             if data["region_weights"]:
                 fig_region = px.bar(
                     x=list(data["region_weights"].keys()),
                     y=[v * 100 for v in data["region_weights"].values()],
-                    labels={"x": "Region", "y": "Andel (%)"},
-                    title="Geografisk fördelning"
+                    labels={"x": "Region", "y": "Share (%)"},
+                    title="Geographic distribution"
                 )
                 st.plotly_chart(fig_region)
-                # Efter st.plotly_chart(fig_region)
                 top_region = max(data["region_weights"], key=data["region_weights"].get)
                 region_share = data["region_weights"][top_region]
                 if region_share > 0.6:
-                    st.warning(f"🌍 Du har hög geografisk koncentration: {top_region} ({round(region_share*100)} %)")
+                    st.warning(f"🌍 High geographic concentration: {top_region} ({round(region_share*100)} %)")
                 else:
-                    st.success("🌎 Portföljen är geografiskt diversifierad.")
+                    st.success("🌎 Portfolio is geographically diversified.")
             else:
-                st.warning("Ingen regiondata hittades.")
+                st.warning("No regional data found.")
         else:
-            st.error("Kunde inte hämta portföljegenskaper.")
+            st.error("Could not fetch portfolio characteristics.")
 
-with st.expander("📉 Riskanalys: Value at Risk (VaR)"):
-    horizon = st.slider("Välj tidshorisont (dagar)", 1, 20, 1)
-    if st.button("Beräkna VaR"):
+with st.expander("📉 Risk Analysis: Value at Risk (VaR)"):
+    horizon = st.slider("Choose time horizon (days)", 1, 20, 1)
+    if st.button("Calculate VaR"):
         request_body = portfolio.copy()
         request_body["horizon"] = horizon
         res = requests.post("http://localhost:8000/var", json=request_body)
@@ -184,25 +182,25 @@ with st.expander("📉 Riskanalys: Value at Risk (VaR)"):
             if "error" in data:
                 st.error(data["error"])
             else:
-                st.metric(f"📉 {horizon}-dagars VaR (95 %)", f"{round(data['VaR_95'] * 100, 2)} %")
-                st.metric(f"🔥 {horizon}-dagars CVaR", f"{round(data['CVaR_95'] * 100, 2)} %")
-                st.metric("📈 Genomsnittlig avkastning", f"{round(data['mean_return'] * 100, 2)} %")
-                st.metric("📊 Volatilitet", f"{round(data['std_dev'] * 100, 2)} %")
+                st.metric(f"📉 {horizon}-day VaR (95%)", f"{round(data['VaR_95'] * 100, 2)} %")
+                st.metric(f"🔥 {horizon}-day CVaR", f"{round(data['CVaR_95'] * 100, 2)} %")
+                st.metric("📈 Average return", f"{round(data['mean_return'] * 100, 2)} %")
+                st.metric("📊 Volatility", f"{round(data['std_dev'] * 100, 2)} %")
 
                 if data["VaR_95"] < -0.03:
-                    st.warning("⚠️ Portföljen har hög nedåtrisk.")
+                    st.warning("⚠️ Portfolio has high downside risk.")
                 elif data["VaR_95"] > -0.01:
-                    st.success("✅ Portföljen har låg historisk nedsiderisk.")
+                    st.success("✅ Portfolio has low historical downside risk.")
 
-                st.caption(f"Analyserade perioder: {data['n_obs']}")
+                st.caption(f"Analyzed periods: {data['n_obs']}")
 
                 # Histogram
-                st.subheader("📊 Fördelning av avkastningar")
+                st.subheader("📊 Return Distribution")
                 fig = go.Figure()
                 fig.add_trace(go.Histogram(
                     x=data["returns"],
                     nbinsx=50,
-                    name="Avkastning",
+                    name="Return",
                     marker_color="lightblue",
                     opacity=0.75
                 ))
@@ -211,14 +209,14 @@ with st.expander("📉 Riskanalys: Value at Risk (VaR)"):
                     line_width=2,
                     line_dash="dash",
                     line_color="red",
-                    annotation_text="VaR 95 %",
+                    annotation_text="VaR 95%",
                     annotation_position="top left"
                 )
                 fig.update_layout(
-                    title=f"{horizon}-dagars portföljavkastning",
-                    xaxis_title="Avkastning",
-                    yaxis_title="Frekvens"
+                    title=f"{horizon}-day portfolio return",
+                    xaxis_title="Return",
+                    yaxis_title="Frequency"
                 )
                 st.plotly_chart(fig)
         else:
-            st.error("Kunde inte hämta VaR-data.")
+            st.error("Could not fetch VaR data.")
