@@ -8,4 +8,4 @@ numpy
 statsmodels
 pandas_datareader
 plotly
-pypfopt
+pypfopt==1.5.5
