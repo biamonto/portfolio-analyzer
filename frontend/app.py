@@ -61,7 +61,7 @@ with st.expander("ℹ️ About this app"):
 
         The backend is powered by FastAPI and uses libraries such as:
         - `yfinance` for financial data
-        - `PyPortfolioOpt` for optimization
+        - `scipy` for portfolio optimization
         - `statsmodels` for regression and factor analysis
 
         The app was built by **Markus Biamont**.  

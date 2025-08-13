@@ -5,5 +5,5 @@ numpy
 statsmodels
 pandas_datareader
 plotly
-pypfopt
+scipy
 httpx

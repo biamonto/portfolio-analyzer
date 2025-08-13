@@ -5,7 +5,7 @@ import plotly.graph_objects as go
 import numpy as np
 import yfinance as yf
 import pandas as pd
-from pypfopt import EfficientFrontier, risk_models, expected_returns
+from scipy.optimize import minimize
 from collections import defaultdict
 import httpx
 
@@ -43,17 +43,34 @@ def analyze_portfolio(df, weights_dict):
         return None
     
     try:
-        mu = expected_returns.mean_historical_return(df)
-        S = risk_models.sample_cov(df)
+        # Calculate returns
+        returns = df.pct_change().dropna()
         
-        ef = EfficientFrontier(mu, S)
-        ef.set_weights(weights_dict)
-        perf = ef.portfolio_performance(verbose=False)
+        # Calculate expected returns (mean)
+        mu = returns.mean() * 252  # Annualized
+        
+        # Calculate covariance matrix
+        S = returns.cov() * 252  # Annualized
+        
+        # Calculate portfolio metrics
+        portfolio_return = sum(mu[asset] * weights_dict[asset] for asset in weights_dict.keys())
+        
+        # Calculate portfolio variance
+        portfolio_variance = 0
+        for asset1 in weights_dict.keys():
+            for asset2 in weights_dict.keys():
+                portfolio_variance += weights_dict[asset1] * weights_dict[asset2] * S.loc[asset1, asset2]
+        
+        portfolio_volatility = np.sqrt(portfolio_variance)
+        
+        # Calculate Sharpe ratio (assuming risk-free rate of 0.02)
+        risk_free_rate = 0.02
+        sharpe_ratio = (portfolio_return - risk_free_rate) / portfolio_volatility if portfolio_volatility > 0 else 0
         
         return {
-            "expected_return": round(perf[0], 4),
-            "volatility": round(perf[1], 4),
-            "sharpe_ratio": round(perf[2], 2),
+            "expected_return": round(portfolio_return, 4),
+            "volatility": round(portfolio_volatility, 4),
+            "sharpe_ratio": round(sharpe_ratio, 2),
         }
     except Exception as e:
         st.error(f"Error analyzing portfolio: {str(e)}")
@@ -65,14 +82,65 @@ def optimize_portfolio(df):
         return None
     
     try:
-        mu = expected_returns.mean_historical_return(df)
-        S = risk_models.sample_cov(df)
+        # Calculate returns
+        returns = df.pct_change().dropna()
         
-        ef = EfficientFrontier(mu, S)
-        weights = ef.max_sharpe()
-        cleaned = ef.clean_weights()
+        # Calculate expected returns (mean)
+        mu = returns.mean() * 252  # Annualized
         
-        return cleaned
+        # Calculate covariance matrix
+        S = returns.cov() * 252  # Annualized
+        
+        # Number of assets
+        n_assets = len(df.columns)
+        
+        # Risk-free rate
+        risk_free_rate = 0.02
+        
+        # Define objective function (negative Sharpe ratio to minimize)
+        def objective(weights):
+            portfolio_return = np.sum(mu * weights)
+            portfolio_variance = np.dot(weights.T, np.dot(S, weights))
+            portfolio_volatility = np.sqrt(portfolio_variance)
+            sharpe_ratio = (portfolio_return - risk_free_rate) / portfolio_volatility if portfolio_volatility > 0 else 0
+            return -sharpe_ratio
+        
+        # Constraints: weights sum to 1
+        constraints = ({'type': 'eq', 'fun': lambda x: np.sum(x) - 1})
+        
+        # Bounds: weights between 0 and 1 (no short selling)
+        bounds = tuple((0, 1) for _ in range(n_assets))
+        
+        # Initial guess: equal weights
+        initial_weights = np.array([1.0/n_assets] * n_assets)
+        
+        # Optimize
+        result = minimize(objective, initial_weights, method='SLSQP', 
+                         bounds=bounds, constraints=constraints)
+        
+        if result.success:
+            # Create weights dictionary
+            weights_dict = {}
+            for i, asset in enumerate(df.columns):
+                weights_dict[asset] = round(result.x[i], 4)
+            
+            # Clean weights (remove very small weights)
+            cleaned_weights = {}
+            for asset, weight in weights_dict.items():
+                if weight > 0.001:  # Only keep weights > 0.1%
+                    cleaned_weights[asset] = weight
+            
+            # Renormalize if needed
+            total_weight = sum(cleaned_weights.values())
+            if total_weight > 0:
+                for asset in cleaned_weights:
+                    cleaned_weights[asset] = round(cleaned_weights[asset] / total_weight, 4)
+            
+            return cleaned_weights
+        else:
+            st.error("Optimization failed")
+            return None
+            
     except Exception as e:
         st.error(f"Error optimizing portfolio: {str(e)}")
         return None
