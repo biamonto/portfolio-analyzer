@@ -1,9 +1,180 @@
 import streamlit as st
-import requests
 import datetime
 import plotly.express as px
 import plotly.graph_objects as go
 import numpy as np
+import yfinance as yf
+import pandas as pd
+from pypfopt import EfficientFrontier, risk_models, expected_returns
+from collections import defaultdict
+import httpx
+
+# Cache data fetching functions for better performance
+@st.cache_data
+def fetch_portfolio_data(symbols, start, end):
+    """Fetch portfolio data with caching"""
+    try:
+        raw = yf.download(symbols, start=start, end=end, progress=False)
+        if raw.empty:
+            return None
+        
+        # Handle MultiIndex columns
+        if isinstance(raw.columns, pd.MultiIndex):
+            try:
+                df = raw['Close']
+            except KeyError:
+                return None
+        else:
+            # Single asset
+            try:
+                df = raw[['Close']]
+                df.columns = [symbols[0]]
+            except KeyError:
+                return None
+        
+        return df.dropna()
+    except Exception as e:
+        st.error(f"Error fetching portfolio data: {str(e)}")
+        return None
+
+def analyze_portfolio(df, weights_dict):
+    """Analyze portfolio performance"""
+    if df is None or df.empty:
+        return None
+    
+    try:
+        mu = expected_returns.mean_historical_return(df)
+        S = risk_models.sample_cov(df)
+        
+        ef = EfficientFrontier(mu, S)
+        ef.set_weights(weights_dict)
+        perf = ef.portfolio_performance(verbose=False)
+        
+        return {
+            "expected_return": round(perf[0], 4),
+            "volatility": round(perf[1], 4),
+            "sharpe_ratio": round(perf[2], 2),
+        }
+    except Exception as e:
+        st.error(f"Error analyzing portfolio: {str(e)}")
+        return None
+
+def optimize_portfolio(df):
+    """Optimize portfolio using maximum Sharpe ratio"""
+    if df is None or df.empty:
+        return None
+    
+    try:
+        mu = expected_returns.mean_historical_return(df)
+        S = risk_models.sample_cov(df)
+        
+        ef = EfficientFrontier(mu, S)
+        weights = ef.max_sharpe()
+        cleaned = ef.clean_weights()
+        
+        return cleaned
+    except Exception as e:
+        st.error(f"Error optimizing portfolio: {str(e)}")
+        return None
+
+def get_portfolio_history(df, weights_dict):
+    """Get portfolio historical performance"""
+    if df is None or df.empty:
+        return None
+    
+    try:
+        # Normalize each asset price to 1.0 at the beginning
+        df_normalized = df / df.iloc[0]
+        
+        # Weight according to user's input
+        for col in df_normalized.columns:
+            df_normalized[col] *= weights_dict.get(col, 0)
+        
+        # Sum up to the portfolio's daily value
+        df_normalized["Total"] = df_normalized.sum(axis=1)
+        
+        return {
+            "dates": df_normalized.index.strftime("%Y-%m-%d").tolist(),
+            "values": df_normalized["Total"].round(4).tolist()
+        }
+    except Exception as e:
+        st.error(f"Error calculating portfolio history: {str(e)}")
+        return None
+
+@st.cache_data
+def get_portfolio_characteristics(symbols, weights):
+    """Get portfolio characteristics using Finnhub API"""
+    FINNHUB_API_KEY = "d0h5cu9r01qv1u35cv5gd0h5cu9r01qv1u35cv60"
+    
+    currency_weights = defaultdict(float)
+    sector_weights = defaultdict(float)
+    region_weights = defaultdict(float)
+    
+    try:
+        with httpx.Client() as client:
+            for symbol in symbols:
+                try:
+                    r = client.get(
+                        "https://finnhub.io/api/v1/stock/profile2",
+                        params={"symbol": symbol, "token": FINNHUB_API_KEY},
+                        timeout=5
+                    )
+                    data = r.json()
+                    w = weights[symbol]
+                    currency = data.get("currency", "UNKNOWN")
+                    sector = data.get("finnhubIndustry", "UNKNOWN")
+                    region = data.get("country", "UNKNOWN")
+                    
+                    currency_weights[currency] += w
+                    sector_weights[sector] += w
+                    region_weights[region] += w
+                    
+                except Exception:
+                    currency_weights["UNKNOWN"] += weights[symbol]
+                    sector_weights["UNKNOWN"] += weights[symbol]
+                    region_weights["UNKNOWN"] += weights[symbol]
+        
+        return {
+            "currency_weights": dict(currency_weights),
+            "sector_weights": dict(sector_weights),
+            "region_weights": dict(region_weights)
+        }
+    except Exception as e:
+        st.error(f"Error fetching portfolio characteristics: {str(e)}")
+        return None
+
+def calculate_var(df, weights_dict, horizon=1):
+    """Calculate Value at Risk"""
+    if df is None or df.empty:
+        return None
+    
+    try:
+        returns = df.pct_change().dropna()
+        
+        for col in returns.columns:
+            returns[col] *= weights_dict.get(col, 0)
+        
+        portfolio_returns = returns.sum(axis=1)
+        
+        # Aggregate over desired horizon
+        if horizon > 1:
+            portfolio_returns = portfolio_returns.rolling(horizon).sum().dropna()
+        
+        var_95 = np.percentile(portfolio_returns, 5)
+        cvar_95 = portfolio_returns[portfolio_returns <= var_95].mean()
+        
+        return {
+            "VaR_95": round(var_95, 4),
+            "CVaR_95": round(cvar_95, 4),
+            "mean_return": round(portfolio_returns.mean(), 4),
+            "std_dev": round(portfolio_returns.std(), 4),
+            "n_obs": len(portfolio_returns),
+            "returns": portfolio_returns.round(4).tolist(),
+            "var_threshold": round(var_95, 4)
+        }
+    except Exception as e:
+        st.error(f"Error calculating VaR: {str(e)}")
+        return None
 
 st.title("📊 Portfolio analysis and optimization")
 
@@ -40,34 +211,26 @@ if symbols:
     for k in weights:
         weights[k] /= total_fraction
 
-        # Prepare API data
-        portfolio = {
-            "assets": [{"symbol": k, "weight": round(v, 4)} for k, v in weights.items()],
-            "start": str(start),
-            "end": str(end)
-        }
+    # Fetch portfolio data
+    df = fetch_portfolio_data(symbol_list, start, end)
 
     if st.button("🔍 Analyze portfolio"):
-        res = requests.post("http://localhost:8000/analyze", json=portfolio)
-        if res.ok:
-            result = res.json()
-            if "error" in result:
-                st.error(result["error"])
-            else:
+        if df is not None:
+            result = analyze_portfolio(df, weights)
+            if result:
                 st.success("Analysis complete!")
                 st.write("📈 Expected return:", round(result["expected_return"] * 100, 2), "%")
                 st.write("📉 Volatility:", round(result["volatility"] * 100, 2), "%")
                 st.write("📊 Sharpe ratio:", result["sharpe_ratio"])
+            else:
+                st.error("Could not analyze portfolio.")
         else:
-            st.error("Could not analyze portfolio.")
+            st.error("No data found for selected symbols and dates.")
 
     if st.button("🧠 Optimize portfolio"):
-        res = requests.post("http://localhost:8000/optimize", json=portfolio)
-        if res.ok:
-            result = res.json()
-            if "error" in result:
-                st.error(result["error"])
-            else:
+        if df is not None:
+            result = optimize_portfolio(df)
+            if result:
                 st.success("Optimization complete!")
                 st.subheader("Optimal weights:")
 
@@ -78,17 +241,16 @@ if symbols:
 
                 for k, v in result.items():
                     st.write(f"{k}: {round(v * 100, 2)} %")
+            else:
+                st.error("Could not optimize portfolio.")
         else:
-            st.error("Could not optimize portfolio.")
+            st.error("No data found for selected symbols and dates.")
 
 with st.expander("📈 Historical returns"):
     if st.button("Show history"):
-        res = requests.post("http://localhost:8000/history", json=portfolio)
-        if res.ok:
-            data = res.json()
-            if "error" in data:
-                st.error(data["error"])
-            else:
+        if df is not None:
+            data = get_portfolio_history(df, weights)
+            if data:
                 fig = go.Figure()
                 fig.add_trace(go.Scatter(
                     x=data["dates"],
@@ -104,84 +266,81 @@ with st.expander("📈 Historical returns"):
                     height=400
                 )
                 st.plotly_chart(fig)
+            else:
+                st.error("Could not calculate portfolio history.")
         else:
-            st.error("Could not fetch history.")
+            st.error("No data found for selected symbols and dates.")
 
 with st.expander("🧬 Show portfolio characteristics"):
     if st.button("Analyse"):
-        res = requests.post("http://localhost:8000/portfolio-characteristics", json=portfolio)
-        if res.ok:
-            data = res.json()
-
-            st.subheader("💱 FX exposure")
-            if data["currency_weights"]:
-                fig_currency = px.pie(
-                    names=list(data["currency_weights"].keys()),
-                    values=[v * 100 for v in data["currency_weights"].values()],
-                    title="FX (%)"
-                )
-                st.plotly_chart(fig_currency)
-                # Efter st.plotly_chart(fig_currency)
-                main_currency = max(data["currency_weights"], key=data["currency_weights"].get)
-                share = data["currency_weights"][main_currency]
-                if share > 0.5:
-                    st.info(f"🔁 High concentration in {main_currency} – currency hedging may be warranted.")
-                    if main_currency == "USD":
-                        st.write("💡 Example: FXE (Euro hedge), USD/SEK-forwards")
-                    if main_currency == "EUR":
-                        st.write("💡 Example: EUO, EUR/SEK-forwards")
-
-            else:
-                st.warning("Ingen valutadata hittades.")
-
-            st.subheader("🏦 Sector allocation")
-            if data["sector_weights"]:
-                fig_sector = px.pie(
-                    names=list(data["sector_weights"].keys()),
-                    values=[v * 100 for v in data["sector_weights"].values()],
-                    title="Sector allocation (%)"
-                )
-                st.plotly_chart(fig_sector)
-                top_sector = max(data["sector_weights"], key=data["sector_weights"].get)
-                top_sector_pct = data["sector_weights"][top_sector]
-                if top_sector_pct > 0.5:
-                    st.info(f"📌 Portfolio is heavily exposed to sector: {top_sector}")
+        if df is not None:
+            data = get_portfolio_characteristics(symbol_list, weights)
+            if data:
+                st.subheader("💱 FX exposure")
+                if data["currency_weights"]:
+                    fig_currency = px.pie(
+                        names=list(data["currency_weights"].keys()),
+                        values=[v * 100 for v in data["currency_weights"].values()],
+                        title="FX (%)"
+                    )
+                    st.plotly_chart(fig_currency)
+                    
+                    main_currency = max(data["currency_weights"], key=data["currency_weights"].get)
+                    share = data["currency_weights"][main_currency]
+                    if share > 0.5:
+                        st.info(f"🔁 High concentration in {main_currency} – currency hedging may be warranted.")
+                        if main_currency == "USD":
+                            st.write("💡 Example: FXE (Euro hedge), USD/SEK-forwards")
+                        if main_currency == "EUR":
+                            st.write("💡 Example: EUO, EUR/SEK-forwards")
                 else:
-                    st.success("✅ Portfolio has balanced sector allocation.")
-            else:
-                st.warning("No sector data found.")
+                    st.warning("No currency data found.")
 
-            st.subheader("🌍 Regional allocation")
-            if data["region_weights"]:
-                fig_region = px.bar(
-                    x=list(data["region_weights"].keys()),
-                    y=[v * 100 for v in data["region_weights"].values()],
-                    labels={"x": "Region", "y": "Share (%)"},
-                    title="Geographic distribution"
-                )
-                st.plotly_chart(fig_region)
-                top_region = max(data["region_weights"], key=data["region_weights"].get)
-                region_share = data["region_weights"][top_region]
-                if region_share > 0.6:
-                    st.warning(f"🌍 High geographic concentration: {top_region} ({round(region_share*100)} %)")
+                st.subheader("🏦 Sector allocation")
+                if data["sector_weights"]:
+                    fig_sector = px.pie(
+                        names=list(data["sector_weights"].keys()),
+                        values=[v * 100 for v in data["sector_weights"].values()],
+                        title="Sector allocation (%)"
+                    )
+                    st.plotly_chart(fig_sector)
+                    top_sector = max(data["sector_weights"], key=data["sector_weights"].get)
+                    top_sector_pct = data["sector_weights"][top_sector]
+                    if top_sector_pct > 0.5:
+                        st.info(f"📌 Portfolio is heavily exposed to sector: {top_sector}")
+                    else:
+                        st.success("✅ Portfolio has balanced sector allocation.")
                 else:
-                    st.success("🌎 Portfolio is geographically diversified.")
+                    st.warning("No sector data found.")
+
+                st.subheader("🌍 Regional allocation")
+                if data["region_weights"]:
+                    fig_region = px.bar(
+                        x=list(data["region_weights"].keys()),
+                        y=[v * 100 for v in data["region_weights"].values()],
+                        labels={"x": "Region", "y": "Share (%)"},
+                        title="Geographic distribution"
+                    )
+                    st.plotly_chart(fig_region)
+                    top_region = max(data["region_weights"], key=data["region_weights"].get)
+                    region_share = data["region_weights"][top_region]
+                    if region_share > 0.6:
+                        st.warning(f"🌍 High geographic concentration: {top_region} ({round(region_share*100)} %)")
+                    else:
+                        st.success("🌎 Portfolio is geographically diversified.")
+                else:
+                    st.warning("No regional data found.")
             else:
-                st.warning("No regional data found.")
+                st.error("Could not fetch portfolio characteristics.")
         else:
-            st.error("Could not fetch portfolio characteristics.")
+            st.error("No data found for selected symbols and dates.")
 
 with st.expander("📉 Risk Analysis: Value at Risk (VaR)"):
     horizon = st.slider("Choose time horizon (days)", 1, 20, 1)
     if st.button("Calculate VaR"):
-        request_body = portfolio.copy()
-        request_body["horizon"] = horizon
-        res = requests.post("http://localhost:8000/var", json=request_body)
-        if res.ok:
-            data = res.json()
-            if "error" in data:
-                st.error(data["error"])
-            else:
+        if df is not None:
+            data = calculate_var(df, weights, horizon)
+            if data:
                 st.metric(f"📉 {horizon}-day VaR (95%)", f"{round(data['VaR_95'] * 100, 2)} %")
                 st.metric(f"🔥 {horizon}-day CVaR", f"{round(data['CVaR_95'] * 100, 2)} %")
                 st.metric("📈 Average return", f"{round(data['mean_return'] * 100, 2)} %")
@@ -218,5 +377,7 @@ with st.expander("📉 Risk Analysis: Value at Risk (VaR)"):
                     yaxis_title="Frequency"
                 )
                 st.plotly_chart(fig)
+            else:
+                st.error("Could not calculate VaR.")
         else:
-            st.error("Could not fetch VaR data.")
+            st.error("No data found for selected symbols and dates.")

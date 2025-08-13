@@ -1,11 +1,9 @@
 streamlit
-fastapi
-uvicorn
-requests
 yfinance
 pandas
 numpy
 statsmodels
 pandas_datareader
 plotly
-git+https://github.com/robertmartin8/PyPortfolioOpt.git
+pypfopt
+httpx
