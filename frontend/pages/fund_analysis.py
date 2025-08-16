@@ -51,35 +51,14 @@ def fetch_fama_french_factors(start, end):
         # Try pandas_datareader first
         ff = web.DataReader("F-F_Research_Data_Factors_daily", "famafrench")[0]
         ff.index = pd.to_datetime(ff.index)
-        return ff[(ff.index >= start) & (ff.index <= end)]
+        ff_filtered = ff[(ff.index >= start) & (ff.index <= end)]
+        if not ff_filtered.empty:
+            return ff_filtered
+        else:
+            raise Exception("No data available for the specified date range")
     except Exception as e:
-        # Fallback: create dummy factors or use alternative source
-        st.warning("Could not fetch Fama-French factors. Using market proxy.")
-        try:
-            # Use SPY as market proxy and create dummy factors
-            spy_data = yf.download("SPY", start=start, end=end, progress=False)
-            if not spy_data.empty:
-                spy_returns = spy_data['Close'].pct_change().dropna()
-                
-                # Create dummy factors (this is a simplified approach)
-                market_factor = spy_returns
-                smb_factor = spy_returns * 0.1  # Small dummy SMB factor
-                hml_factor = spy_returns * 0.05  # Small dummy HML factor
-                rf_factor = pd.Series(0.02/252, index=spy_returns.index)  # Risk-free rate
-                
-                ff_data = pd.DataFrame({
-                    'Mkt-RF': market_factor - rf_factor,
-                    'SMB': smb_factor,
-                    'HML': hml_factor,
-                    'RF': rf_factor
-                })
-                
-                return ff_data
-            else:
-                return None
-        except Exception as fallback_error:
-            st.error(f"Error in fallback factor creation: {str(fallback_error)}")
-            return None
+        # Don't try fallback - just return None
+        return None
 
 def analyze_etf(df, symbol):
     """Analyze ETF performance metrics"""
@@ -164,22 +143,42 @@ def analyze_fama_french(etf_returns, symbol, start, end):
         # Fetch Fama-French factors
         ff = fetch_fama_french_factors(start, end)
         if ff is None:
-            return None
+            return {"error": "Could not fetch Fama-French factor data"}
         
-        # Align the data
+        # Ensure etf_returns is a Series with proper index
+        if not isinstance(etf_returns, pd.Series):
+            return {"error": "ETF returns must be a pandas Series"}
+        
+        # Align the data properly
         etf_returns.index = pd.to_datetime(etf_returns.index)
-        aligned_data = pd.concat([etf_returns, ff], axis=1, join='inner')
-        if aligned_data.empty:
-            return {"error": "No overlapping dates found between ETF and factor data"}
+        ff.index = pd.to_datetime(ff.index)
+        
+        # Find common dates
+        common_dates = etf_returns.index.intersection(ff.index)
+        if len(common_dates) < 30:
+            return {"error": f"Insufficient overlapping data points ({len(common_dates)} found, need at least 30)"}
+        
+        # Align both datasets to common dates
+        etf_aligned = etf_returns.loc[common_dates]
+        ff_aligned = ff.loc[common_dates]
+        
+        # Create aligned dataframe
+        aligned_data = pd.DataFrame({
+            'ETF_Returns': etf_aligned,
+            'Mkt-RF': ff_aligned['Mkt-RF'],
+            'SMB': ff_aligned['SMB'],
+            'HML': ff_aligned['HML'],
+            'RF': ff_aligned['RF']
+        })
         
         # Remove any remaining NaN values
         aligned_data = aligned_data.dropna()
         
         if len(aligned_data) < 30:
-            return {"error": "Insufficient data points for analysis"}
+            return {"error": "Insufficient data points for analysis after removing NaN values"}
         
         # Prepare data for regression
-        y = aligned_data.iloc[:, 0] - aligned_data['RF'] / 100  # Excess returns
+        y = aligned_data['ETF_Returns'] - aligned_data['RF'] / 100  # Excess returns
         X = aligned_data[['Mkt-RF', 'SMB', 'HML']].values / 100  # Convert factors to decimals
         X = sm.add_constant(X)  # Add constant for alpha
         
@@ -205,12 +204,13 @@ def analyze_fama_french(etf_returns, symbol, start, end):
         }
         
     except Exception as e:
-        return {"error": str(e)}
+        return {"error": f"Error in Fama-French analysis: {str(e)}"}
 
 st.title("📊 Fund analysis")
 
 with st.form("etf_form"):
     symbol = st.text_input("Fund symbol (ex: SPY, QQQ, ARKK)").upper()
+    benchmark = st.text_input("Benchmark symbol (ex: SPY, VTI, QQQ)", value="SPY").upper()
     col1, col2 = st.columns(2)
     with col1:
         start = st.date_input("Start date", value=datetime.date(2020, 1, 1))
@@ -251,9 +251,9 @@ if submitted and symbol:
 
             st.subheader("🧠 Alpha and beta analysis (CAPM)")
 
-            # Alpha/Beta analysis with SPY benchmark
-            benchmark_df = fetch_benchmark_data(symbol, "SPY", start, end)
-            alpha_data = analyze_alpha_beta(benchmark_df, symbol, "SPY")
+            # Alpha/Beta analysis with selected benchmark
+            benchmark_df = fetch_benchmark_data(symbol, benchmark, start, end)
+            alpha_data = analyze_alpha_beta(benchmark_df, symbol, benchmark)
 
             if alpha_data:
                 st.markdown(f"**Benchmark:** {alpha_data['benchmark']}")
@@ -280,9 +280,9 @@ if submitted and symbol:
                     fig_scatter = px.scatter(
                         x=scatter["benchmark_ret"],
                         y=scatter["etf_ret"],
-                        labels={"x": f"{symbol} benchmark (daily %)", "y": f"{symbol} (daily %)"},
+                        labels={"x": f"{benchmark} benchmark (daily %)", "y": f"{symbol} (daily %)"},
                         trendline="ols",
-                        title="Daily ETF return vs Benchmark"
+                        title=f"Daily {symbol} return vs {benchmark} benchmark"
                     )
                     st.plotly_chart(fig_scatter)
             else:
@@ -317,8 +317,10 @@ if submitted and symbol:
                 if abs(ff_data["beta_hml"]) > 0.3:
                     st.info(f"📘 Value or growth bias: {round(ff_data['beta_hml'], 2)}")
             elif ff_data and "error" in ff_data:
-                st.error(ff_data["error"])
+                st.warning(f"⚠️ Fama-French analysis unavailable: {ff_data['error']}")
+                st.info("💡 This analysis requires access to Fama-French factor data. The CAPM analysis above provides similar insights.")
             else:
-                st.error("Could not fetch factor data.")
+                st.warning("⚠️ Fama-French analysis unavailable")
+                st.info("💡 This analysis requires access to Fama-French factor data. The CAPM analysis above provides similar insights.")
     else:
         st.error("Could not analyze the ETF. Please check the symbol and date range.")
